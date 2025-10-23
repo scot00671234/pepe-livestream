@@ -10,12 +10,18 @@ const DROPBOX_URL = 'https://www.dropbox.com/scl/fi/esjfz5uujwgafvcjidx0g/genera
 const RTMP_URL = 'rtmps://pump-prod-tg2x8veh.rtmp.livekit.cloud/x';
 const STREAM_KEY = 'bFTdmGKyY9cx';
 
-// Multiple RTMP endpoints for fallback
+// Multiple RTMP endpoints for fallback with connection testing
 const RTMP_ENDPOINTS = [
   'rtmps://pump-prod-tg2x8veh.rtmp.livekit.cloud/x',
   'rtmp://pump-prod-tg2x8veh.rtmp.livekit.cloud/x', // Try RTMP instead of RTMPS
   'rtmps://pump-prod-tg2x8veh.rtmp.livekit.cloud/x' // Retry RTMPS
 ];
+
+// Connection testing and validation
+const CONNECTION_TEST_INTERVAL = 30000; // Test connection every 30 seconds
+let lastConnectionTest = 0;
+let connectionFailures = 0;
+const MAX_CONNECTION_FAILURES = 3;
 
 let streamProcess = null;
 let isStreaming = false;
@@ -31,7 +37,129 @@ let autoRestartEnabled = true;
 let streamHealthCheckInterval = null;
 let lastStreamActivity = Date.now();
 
-// Stream health monitoring system
+// Comprehensive FFmpeg error prevention
+function addFFmpegErrorPrevention(ffmpegProcess) {
+  // Add connection timeout
+  ffmpegProcess.inputOptions([
+    '-timeout', '30000000', // 30 second input timeout
+    '-reconnect', '1', // Enable reconnection
+    '-reconnect_streamed', '1', // Reconnect for streamed inputs
+    '-reconnect_delay_max', '2', // Max 2 second delay between reconnects
+    '-rw_timeout', '10000000' // 10 second read/write timeout
+  ]);
+  
+  // Add output error prevention
+  ffmpegProcess.outputOptions([
+    '-f', 'flv', // Force FLV format
+    '-flvflags', 'no_duration_filesize', // Prevent duration issues
+    '-avoid_negative_ts', 'make_zero', // Avoid timestamp issues
+    '-fflags', '+genpts', // Generate presentation timestamps
+    '-max_interleave_delta', '0', // Prevent interleaving issues
+    '-strict', 'experimental' // Allow experimental features
+  ]);
+  
+  return ffmpegProcess;
+}
+
+// Connection testing function
+function testRTMPConnection(endpoint, callback) {
+  const testProcess = ffmpeg()
+    .input('testsrc=duration=1:size=320x240:rate=1') // 1 second test video
+    .inputOptions(['-f', 'lavfi'])
+    .outputOptions([
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
+      '-crf', '30', '-maxrate', '100k', '-bufsize', '200k',
+      '-g', '1', '-keyint_min', '1',
+      '-c:a', 'aac', '-b:a', '32k',
+      '-f', 'flv'
+    ])
+    .output(`${endpoint}/${STREAM_KEY}`)
+    .on('start', () => {
+      console.log(`Testing connection to ${endpoint}...`);
+    })
+    .on('end', () => {
+      console.log(`Connection test successful for ${endpoint}`);
+      callback(true);
+    })
+    .on('error', (err) => {
+      console.log(`Connection test failed for ${endpoint}: ${err.message}`);
+      callback(false);
+    });
+  
+  // Kill test after 5 seconds
+  setTimeout(() => {
+    if (testProcess && testProcess.kill) {
+      testProcess.kill('SIGTERM');
+    }
+  }, 5000);
+  
+  testProcess.run();
+}
+
+// Stream health monitoring system with enhanced error prevention
+function startStreamHealthMonitoring() {
+  if (streamHealthCheckInterval) {
+    clearInterval(streamHealthCheckInterval);
+  }
+  
+  streamHealthCheckInterval = setInterval(() => {
+    if (isStreaming && autoRestartEnabled) {
+      const timeSinceLastActivity = Date.now() - lastStreamActivity;
+      
+      // If no activity for 30 seconds, consider stream dead
+      if (timeSinceLastActivity > 30000) {
+        console.log('Stream appears to be dead - no activity for 30 seconds');
+        console.log('Auto-restarting stream...');
+        handleStreamFailure('Stream timeout - no activity detected');
+      }
+      
+      // Test connection periodically
+      const now = Date.now();
+      if (now - lastConnectionTest > CONNECTION_TEST_INTERVAL) {
+        lastConnectionTest = now;
+        testRTMPConnection(RTMP_ENDPOINTS[currentEndpointIndex], (success) => {
+          if (!success) {
+            connectionFailures++;
+            console.log(`Connection test failed (${connectionFailures}/${MAX_CONNECTION_FAILURES})`);
+            if (connectionFailures >= MAX_CONNECTION_FAILURES) {
+              console.log('Too many connection failures, switching endpoint');
+              currentEndpointIndex = (currentEndpointIndex + 1) % RTMP_ENDPOINTS.length;
+              connectionFailures = 0;
+              handleStreamFailure('Connection test failed - switching endpoint');
+            }
+          } else {
+            connectionFailures = 0;
+          }
+        });
+      }
+    }
+  }, 5000); // Check every 5 seconds
+}
+
+function stopStreamHealthMonitoring() {
+  if (streamHealthCheckInterval) {
+    clearInterval(streamHealthCheckInterval);
+    streamHealthCheckInterval = null;
+  }
+}
+
+function handleStreamFailure(reason) {
+  console.log(`Stream failure detected: ${reason}`);
+  isStreaming = false;
+  
+  if (streamProcess) {
+    streamProcess.kill('SIGTERM');
+    streamProcess = null;
+  }
+  
+  if (autoRestartEnabled) {
+    // Auto-restart the stream
+    setTimeout(() => {
+      console.log('Auto-restarting stream due to failure...');
+      startStreamInternal();
+    }, 2000); // 2 second delay before restart
+  }
+}
 function startStreamHealthMonitoring() {
   if (streamHealthCheckInterval) {
     clearInterval(streamHealthCheckInterval);
@@ -164,7 +292,7 @@ function getStreamingConfig() {
   return config;
 }
 
-// Internal streaming function
+// Internal streaming function with pre-connection testing
 function startStreamInternal() {
   if (isStreaming) {
     return;
@@ -172,9 +300,35 @@ function startStreamInternal() {
 
   console.log('Starting livestream...');
   
+  // Pre-test connection before starting stream
+  const currentEndpoint = RTMP_ENDPOINTS[currentEndpointIndex];
+  console.log(`Pre-testing connection to ${currentEndpoint}...`);
+  
+  testRTMPConnection(currentEndpoint, (success) => {
+    if (!success) {
+      console.log('Pre-connection test failed, switching endpoint...');
+      currentEndpointIndex = (currentEndpointIndex + 1) % RTMP_ENDPOINTS.length;
+      connectionFailures++;
+      
+      if (connectionFailures >= MAX_CONNECTION_FAILURES) {
+        console.log('All endpoints failed pre-test, using fallback configuration');
+        currentConfigIndex = 2; // Ultra Stable config
+        connectionFailures = 0;
+      }
+      
+      // Retry with new endpoint
+      setTimeout(() => startStreamInternal(), 2000);
+      return;
+    }
+    
+    console.log('Pre-connection test successful, starting stream...');
+    startActualStream();
+  });
+}
+
+function startActualStream() {
   try {
     const config = getStreamingConfig();
-    
     const currentEndpoint = RTMP_ENDPOINTS[currentEndpointIndex];
     console.log(`Using RTMP endpoint: ${currentEndpoint} (${currentEndpointIndex + 1}/${RTMP_ENDPOINTS.length})`);
     
@@ -182,7 +336,12 @@ function startStreamInternal() {
       .input(DROPBOX_URL)
       .inputOptions(config.inputOptions)
       .outputOptions(config.outputOptions)
-      .output(`${currentEndpoint}/${STREAM_KEY}`)
+      .output(`${currentEndpoint}/${STREAM_KEY}`);
+    
+    // Apply comprehensive error prevention
+    streamProcess = addFFmpegErrorPrevention(streamProcess);
+    
+    streamProcess
       .on('start', (commandLine) => {
         console.log('FFmpeg command:', commandLine);
         isStreaming = true;
@@ -213,10 +372,23 @@ function startStreamInternal() {
           consecutiveErrors = 1;
         }
         
-        // Handle specific error codes
+        // Handle specific error codes with enhanced 224 error handling
         if (err.code === 224) {
-          console.error('FFmpeg conversion failed (code 224) - likely network or RTMP issue');
+          console.error('FFmpeg conversion failed (code 224) - implementing enhanced recovery...');
           console.error(`Consecutive errors: ${consecutiveErrors}`);
+          
+          // For 224 errors, try immediate endpoint switch
+          currentEndpointIndex = (currentEndpointIndex + 1) % RTMP_ENDPOINTS.length;
+          console.log(`Switching to endpoint ${currentEndpointIndex + 1} due to 224 error`);
+          
+          // Reset connection failures for new endpoint
+          connectionFailures = 0;
+          
+          // Use more conservative settings for 224 errors
+          if (currentConfigIndex < 2) {
+            currentConfigIndex = 2; // Switch to Ultra Stable config
+            console.log('Switching to Ultra Stable configuration for 224 error recovery');
+          }
         } else if (err.code === 1) {
           console.error('FFmpeg general error (code 1) - check input source');
         } else if (err.signal === 'SIGTERM') {
