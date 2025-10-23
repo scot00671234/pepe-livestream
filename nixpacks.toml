@@ -1,8 +1,5 @@
-[providers]
-node = "18"
-
 [phases.setup]
-nixPkgs = ["nodejs", "ffmpeg", "curl"]
+nixPkgs = ["nodejs_18", "ffmpeg", "curl"]
 
 [phases.install]
 cmds = ["npm ci --only=production"]
