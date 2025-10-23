@@ -1,6 +1,8 @@
-# Livestreamer
+# Pepe Livestreamer
 
 A simple Node.js application for streaming video content to LiveKit RTMP endpoints.
+
+**Updated: Fixed nixpacks configuration**
 
 ## Features
 
