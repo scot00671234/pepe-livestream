@@ -174,60 +174,51 @@ app.get('/', (req, res) => {
   const configName = STREAMING_CONFIGS[currentConfigIndex].name;
   const endpointNum = currentEndpointIndex + 1;
   
-  res.send(
-    <html>
-      <head>
-        <title>Pepe Livestreamer - Auto Mode</title>
-        <style>
-          body { font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }
-          .status-card { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); max-width: 600px; margin: 0 auto; }
-          .status { font-size: 28px; font-weight: bold; margin: 20px 0; }
-          .streaming { color: #4CAF50; }
-          .stopped { color: #f44336; }
-          .info { margin: 15px 0; font-size: 16px; }
-          .auto-badge { background: #4CAF50; color: white; padding: 5px 15px; border-radius: 20px; font-size: 14px; }
-        </style>
-      </head>
-      <body>
-        <div class="status-card">
-          <h1>ðŸŽ¥ Pepe Livestreamer</h1>
-          <div class="auto-badge">FULLY AUTOMATIC</div>
-          <p class="status" id="status"></p>
-          <div class="info">
-            <p><strong>Mode:</strong> Fully Automatic</p>
-            <p><strong>Current Config:</strong> <span id="config"></span></p>
-            <p><strong>Endpoint:</strong> <span id="endpoint">/3</span></p>
-            <p><strong>Restart Attempts:</strong> <span id="attempts"></span></p>
-          </div>
-          <p style="color: #666; font-style: italic; margin-top: 30px;">
-            ðŸš€ Stream runs automatically on deployment<br>
-            ðŸ”„ Auto-restarts on any error<br>
-            ðŸ›¡ï¸ Multiple fallback configurations<br>
-            âš¡ No manual intervention needed!
-          </p>
-        </div>
-        
-        <script>
-          async function updateStatus() {
-            try {
-              const response = await fetch('/status');
-              const data = await response.json();
-              
-              document.getElementById('status').textContent = data.streaming ? 'Streaming' : 'Stopped';
-              document.getElementById('status').className = data.streaming ? 'status streaming' : 'status stopped';
-              document.getElementById('config').textContent = data.currentConfig;
-              document.getElementById('attempts').textContent = data.restartAttempts;
-            } catch (error) {
-              console.error('Error updating status:', error);
-            }
-          }
-          
-          setInterval(updateStatus, 5000);
-          updateStatus();
-        </script>
-      </body>
-    </html>
-  );
+  const html = '<html><head><title>Pepe Livestreamer - Auto Mode</title>' +
+    '<style>body{font-family:Arial,sans-serif;margin:40px;background:#f5f5f5}' +
+    '.status-card{background:white;padding:30px;border-radius:15px;box-shadow:0 4px 20px rgba(0,0,0,0.1);max-width:600px;margin:0 auto}' +
+    '.status{font-size:28px;font-weight:bold;margin:20px 0}' +
+    '.streaming{color:#4CAF50}' +
+    '.stopped{color:#f44336}' +
+    '.info{margin:15px 0;font-size:16px}' +
+    '.auto-badge{background:#4CAF50;color:white;padding:5px 15px;border-radius:20px;font-size:14px}' +
+    '</style></head><body>' +
+    '<div class="status-card">' +
+    '<h1>ðŸŽ¥ Pepe Livestreamer</h1>' +
+    '<div class="auto-badge">FULLY AUTOMATIC</div>' +
+    '<p class="status" id="status">' + statusHtml + '</p>' +
+    '<div class="info">' +
+    '<p><strong>Mode:</strong> Fully Automatic</p>' +
+    '<p><strong>Current Config:</strong> <span id="config">' + configName + '</span></p>' +
+    '<p><strong>Endpoint:</strong> <span id="endpoint">' + endpointNum + '/3</span></p>' +
+    '<p><strong>Restart Attempts:</strong> <span id="attempts">' + restartAttempts + '</span></p>' +
+    '</div>' +
+    '<p style="color:#666;font-style:italic;margin-top:30px">' +
+    'ðŸš€ Stream runs automatically on deployment<br>' +
+    'ðŸ”„ Auto-restarts on any error<br>' +
+    'ðŸ›¡ï¸ Multiple fallback configurations<br>' +
+    'âš¡ No manual intervention needed!' +
+    '</p>' +
+    '</div>' +
+    '<script>' +
+    'async function updateStatus(){' +
+    'try{' +
+    'const response=await fetch("/status");' +
+    'const data=await response.json();' +
+    'document.getElementById("status").textContent=data.streaming?"Streaming":"Stopped";' +
+    'document.getElementById("status").className=data.streaming?"status streaming":"status stopped";' +
+    'document.getElementById("config").textContent=data.currentConfig;' +
+    'document.getElementById("attempts").textContent=data.restartAttempts;' +
+    '}catch(error){' +
+    'console.error("Error updating status:",error);' +
+    '}' +
+    '}' +
+    'setInterval(updateStatus,5000);' +
+    'updateStatus();' +
+    '</script>' +
+    '</body></html>';
+  
+  res.send(html);
 });
 
 // Health check endpoint
