@@ -1,0 +1,15 @@
+﻿[phases.setup]
+nixPkgs = ["nodejs_18", "ffmpeg", "curl"]
+
+[phases.install]
+cmds = ["npm ci --only=production"]
+
+[phases.build]
+cmds = ["echo 'Build complete'"]
+
+[start]
+cmd = "npm start"
+
+[variables]
+NODE_ENV = "production"
+PORT = "3000"
