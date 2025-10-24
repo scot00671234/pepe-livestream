@@ -72,6 +72,12 @@ let isFallbackMode = false;
 let fallbackAttempts = 0;
 const MAX_FALLBACK_ATTEMPTS = 5;
 
+// Smooth transition variables
+let isTransitioning = false;
+let nextVideoIndex = 0;
+let transitionTimeout = null;
+const TRANSITION_DURATION = 3000; // 3 seconds for smooth transition
+
 // Video validation function
 function validateVideoUrl(url) {
   // Check if URL has proper dl=1 parameter for Dropbox
@@ -129,16 +135,29 @@ function stopVideoRotation() {
 }
 
 function rotateToNextVideo() {
-  const previousVideo = currentVideoIndex + 1;
-  currentVideoIndex = (currentVideoIndex + 1) % VIDEO_URLS.length;
-  const nextVideo = currentVideoIndex + 1;
+  if (isTransitioning) {
+    console.log('⚠️ Transition already in progress, skipping...');
+    return;
+  }
   
-  console.log('🔄 ROTATING VIDEOS:');
+  const previousVideo = currentVideoIndex + 1;
+  nextVideoIndex = (currentVideoIndex + 1) % VIDEO_URLS.length;
+  const nextVideo = nextVideoIndex + 1;
+  
+  console.log('🔄 SMOOTH VIDEO TRANSITION:');
   console.log('   Previous: Video ' + previousVideo + '/' + VIDEO_URLS.length);
   console.log('   Next: Video ' + nextVideo + '/' + VIDEO_URLS.length);
-  console.log('   URL: ' + VIDEO_URLS[currentVideoIndex]);
+  console.log('   URL: ' + VIDEO_URLS[nextVideoIndex]);
   
-  // Restart stream with new video
+  startSmoothTransition();
+}
+
+function startSmoothTransition() {
+  isTransitioning = true;
+  
+  console.log('🎬 Starting smooth transition with Pepe fallback...');
+  
+  // Stop current stream
   if (streamProcess) {
     streamProcess.kill('SIGTERM');
     streamProcess = null;
@@ -148,9 +167,65 @@ function rotateToNextVideo() {
   stopHealthMonitoring();
   stopVideoRotation();
   
-  setTimeout(() => {
-    startStream();
-  }, 2000);
+  // Start fallback image during transition
+  startTransitionFallback();
+}
+
+function startTransitionFallback() {
+  console.log('🖼️ Showing Pepe fallback during transition...');
+  
+  try {
+    const config = STREAMING_CONFIGS[2]; // Use stable config
+    const endpoint = RTMP_ENDPOINTS[currentEndpointIndex];
+    const rtmpUrl = endpoint + '/' + STREAM_KEY;
+    
+    streamProcess = ffmpeg()
+      .input(FALLBACK_IMAGE_SVG)
+      .inputOptions(['-loop', '1', '-r', '1', '-t', Math.floor(TRANSITION_DURATION / 1000)]) // Short duration for transition
+      .outputOptions(['-vf', 'scale=1280:720', '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'stillimage', '-crf', '30', '-maxrate', '500k', '-bufsize', '500k', '-g', '60', '-keyint_min', '60', '-sc_threshold', '0', '-c:a', 'aac', '-b:a', '32k', '-ar', '44100', '-ac', '2', '-f', 'flv'])
+      .output(rtmpUrl)
+      .on('start', (commandLine) => {
+        console.log('✅ Transition fallback started');
+        isStreaming = true;
+        lastStreamActivity = Date.now();
+        startHealthMonitoring();
+      })
+      .on('end', () => {
+        console.log('🎥 Transition fallback ended, starting next video...');
+        isStreaming = false;
+        stopHealthMonitoring();
+        
+        // Switch to next video after transition
+        currentVideoIndex = nextVideoIndex;
+        setTimeout(() => {
+          isTransitioning = false;
+          startStream();
+        }, 1000);
+      })
+      .on('error', (err) => {
+        console.error('❌ Transition fallback error:', err.message);
+        isStreaming = false;
+        stopHealthMonitoring();
+        
+        // Skip transition and go directly to next video
+        currentVideoIndex = nextVideoIndex;
+        isTransitioning = false;
+        setTimeout(() => {
+          startStream();
+        }, 1000);
+      });
+
+    streamProcess.run();
+    
+  } catch (error) {
+    console.error('Error starting transition fallback:', error);
+    // Skip transition and go directly to next video
+    currentVideoIndex = nextVideoIndex;
+    isTransitioning = false;
+    setTimeout(() => {
+      startStream();
+    }, 1000);
+  }
 }
 
 // Ultimate fallback mode - use static Pepe image
@@ -340,12 +415,12 @@ function startStream() {
         stopHealthMonitoring();
         stopVideoRotation();
         
-        // If not in fallback mode, rotate to next video
-        if (!isFallbackMode) {
-          console.log('🎥 Video finished, rotating to next video...');
+        // If not in fallback mode and not already transitioning, start smooth transition
+        if (!isFallbackMode && !isTransitioning) {
+          console.log('🎥 Video finished, starting smooth transition...');
           setTimeout(() => {
             rotateToNextVideo();
-          }, 2000);
+          }, 1000);
         }
       });
 
@@ -363,10 +438,12 @@ app.get('/status', (req, res) => {
     streaming: isStreaming,
     currentConfig: STREAMING_CONFIGS[currentConfigIndex].name,
     currentEndpoint: RTMP_ENDPOINTS[currentEndpointIndex],
-    currentVideo: isFallbackMode ? 'FALLBACK' : (currentVideoIndex + 1),
+    currentVideo: isFallbackMode ? 'FALLBACK' : (isTransitioning ? 'TRANSITIONING' : (currentVideoIndex + 1)),
     totalVideos: isFallbackMode ? 'FALLBACK' : VIDEO_URLS.length,
-    currentVideoUrl: isFallbackMode ? 'EMBEDDED_SVG' : VIDEO_URLS[currentVideoIndex],
+    currentVideoUrl: isFallbackMode ? 'EMBEDDED_SVG' : (isTransitioning ? 'TRANSITION_SVG' : VIDEO_URLS[currentVideoIndex]),
     isFallbackMode: isFallbackMode,
+    isTransitioning: isTransitioning,
+    nextVideo: isTransitioning ? (nextVideoIndex + 1) : null,
     restartAttempts: restartAttempts,
     fallbackAttempts: fallbackAttempts,
     timestamp: new Date().toISOString()
@@ -375,16 +452,32 @@ app.get('/status', (req, res) => {
 
 // Simple status page
 app.get('/', (req, res) => {
-  const statusHtml = isStreaming ? (isFallbackMode ? 'Fallback Mode' : 'Streaming') : 'Stopped';
+  let statusHtml = 'Stopped';
+  if (isStreaming) {
+    if (isFallbackMode) {
+      statusHtml = 'Fallback Mode';
+    } else if (isTransitioning) {
+      statusHtml = 'Transitioning';
+    } else {
+      statusHtml = 'Streaming';
+    }
+  }
+  
   const configName = STREAMING_CONFIGS[currentConfigIndex].name;
   const endpointNum = currentEndpointIndex + 1;
-  const videoNum = isFallbackMode ? 'FALLBACK' : (currentVideoIndex + 1);
+  let videoNum = currentVideoIndex + 1;
+  if (isFallbackMode) {
+    videoNum = 'FALLBACK';
+  } else if (isTransitioning) {
+    videoNum = 'TRANSITIONING';
+  }
   
   const html = '<html><head><title>Pepe Livestreamer - Auto Mode</title>' +
     '<style>body{font-family:Arial,sans-serif;margin:40px;background:#f5f5f5}' +
     '.status-card{background:white;padding:30px;border-radius:15px;box-shadow:0 4px 20px rgba(0,0,0,0.1);max-width:600px;margin:0 auto}' +
     '.status{font-size:28px;font-weight:bold;margin:20px 0}' +
     '.streaming{color:#4CAF50}' +
+    '.transition{color:#2196F3}' +
     '.fallback{color:#ff6b35}' +
     '.stopped{color:#f44336}' +
     '.info{margin:15px 0;font-size:16px}' +
@@ -401,6 +494,7 @@ app.get('/', (req, res) => {
     '<p><strong>Current Video:</strong> <span id="video">' + videoNum + (isFallbackMode ? '' : ('/' + VIDEO_URLS.length)) + '</span></p>' +
     '<p><strong>Restart Attempts:</strong> <span id="attempts">' + restartAttempts + '</span></p>' +
     (isFallbackMode ? '<p><strong>Fallback Mode:</strong> <span style="color:#ff6b35;font-weight:bold">ACTIVE - EMBEDDED PEPE SVG</span></p>' : '') +
+    (isTransitioning ? '<p><strong>Transition:</strong> <span style="color:#2196F3;font-weight:bold">SHOWING PEPE → VIDEO ' + (nextVideoIndex + 1) + '</span></p>' : '') +
     '</div>' +
     '<p style="color:#666;font-style:italic;margin-top:30px">' +
     '🚀 Stream runs automatically on deployment<br>' +
@@ -416,10 +510,19 @@ app.get('/', (req, res) => {
     'try{' +
     'const response=await fetch("/status");' +
     'const data=await response.json();' +
-    'document.getElementById("status").textContent=data.streaming?(data.isFallbackMode?"Fallback Mode":"Streaming"):"Stopped";' +
-    'document.getElementById("status").className=data.streaming?(data.isFallbackMode?"status fallback":"status streaming"):"status stopped";' +
+    'let statusText="Stopped";' +
+    'let statusClass="status stopped";' +
+    'if(data.streaming){' +
+    '  if(data.isFallbackMode){statusText="Fallback Mode";statusClass="status fallback";}' +
+    '  else if(data.isTransitioning){statusText="Transitioning";statusClass="status transition";}' +
+    '  else{statusText="Streaming";statusClass="status streaming";}' +
+    '}' +
+    'document.getElementById("status").textContent=statusText;' +
+    'document.getElementById("status").className=statusClass;' +
     'document.getElementById("config").textContent=data.currentConfig;' +
-    'document.getElementById("video").textContent=data.isFallbackMode?"FALLBACK":(data.currentVideo+"/"+data.totalVideos);' +
+    'let videoText=data.currentVideo;' +
+    'if(!data.isFallbackMode&&!data.isTransitioning){videoText+="/"+data.totalVideos;}' +
+    'document.getElementById("video").textContent=videoText;' +
     'document.getElementById("attempts").textContent=data.restartAttempts;' +
     '}catch(error){' +
     'console.error("Error updating status:",error);' +
