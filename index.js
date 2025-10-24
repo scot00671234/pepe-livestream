@@ -12,7 +12,7 @@ console.log('🚀 FULLY AUTOMATIC LIVESTREAMER v3.0 STARTING...');
 // Configuration
 const VIDEO_URLS = [
   'https://www.dropbox.com/scl/fi/esjfz5uujwgafvcjidx0g/generated_video-10.mp4?rlkey=isfdeugfzv1p4t9fqne9g48pm&st=btbst1gu&dl=1',
-  'https://www.dropbox.com/scl/fi/mx6tmkzl5a66fmvirk1o2/202510240744-7.mp4?rlkey=f9594j9jhvwk78ez6ui64f1yd&st=wh1mqgrm&dl=0'
+  'https://www.dropbox.com/scl/fi/mx6tmkzl5a66fmvirk1o2/202510240744-7.mp4?rlkey=f9594j9jhvwk78ez6ui64f1yd&st=wh1mqgrm&dl=1'
 ];
 
 // Ultimate fallback - Embedded Pepe image when everything fails
@@ -32,7 +32,7 @@ const STREAM_KEY = 'bFTdmGKyY9cx';
 const RTMP_ENDPOINTS = [
   'rtmps://pump-prod-tg2x8veh.rtmp.livekit.cloud/x',
   'rtmp://pump-prod-tg2x8veh.rtmp.livekit.cloud/x',
-  'rtmps://pump-prod-tg2x8veh.rtmp.livekit.cloud/x'
+  'rtmp://pump-prod-tg2x8veh.rtmp.livekit.cloud/x'
 ];
 
 // Streaming configurations
@@ -71,6 +71,16 @@ const VIDEO_ROTATION_INTERVAL = 5 * 60 * 1000; // 5 minutes in milliseconds
 let isFallbackMode = false;
 let fallbackAttempts = 0;
 const MAX_FALLBACK_ATTEMPTS = 5;
+
+// Video validation function
+function validateVideoUrl(url) {
+  // Check if URL has proper dl=1 parameter for Dropbox
+  if (url.includes('dropbox.com') && !url.includes('dl=1')) {
+    console.log('⚠️ Warning: Dropbox URL missing dl=1 parameter');
+    return false;
+  }
+  return true;
+}
 
 // Stream health monitoring
 function startHealthMonitoring() {
@@ -174,10 +184,11 @@ function startFallbackStream() {
   
   try {
     const config = STREAMING_CONFIGS[2]; // Use ultra stable config
-    const endpoint = RTMP_ENDPOINTS[0]; // Use first endpoint
+    const endpoint = RTMP_ENDPOINTS[currentEndpointIndex]; // Use current endpoint
     const rtmpUrl = endpoint + '/' + STREAM_KEY;
     
     console.log('Using fallback config: ' + config.name);
+    console.log('Using endpoint: ' + endpoint);
     console.log('Using embedded fallback image (SVG)');
     
     streamProcess = ffmpeg()
@@ -205,6 +216,11 @@ function startFallbackStream() {
         if (fallbackAttempts < MAX_FALLBACK_ATTEMPTS) {
           fallbackAttempts++;
           console.log('🔄 Retrying fallback stream (attempt ' + fallbackAttempts + '/' + MAX_FALLBACK_ATTEMPTS + ')...');
+          
+          // Try different endpoint
+          currentEndpointIndex = (currentEndpointIndex + 1) % RTMP_ENDPOINTS.length;
+          console.log('Trying endpoint: ' + RTMP_ENDPOINTS[currentEndpointIndex]);
+          
           setTimeout(() => {
             startFallbackStream();
           }, 5000);
@@ -269,6 +285,13 @@ function startStream() {
     const endpoint = RTMP_ENDPOINTS[currentEndpointIndex];
     const rtmpUrl = endpoint + '/' + STREAM_KEY;
     const currentVideoUrl = VIDEO_URLS[currentVideoIndex];
+    
+    // Validate video URL
+    if (!validateVideoUrl(currentVideoUrl)) {
+      console.log('⚠️ Video URL validation failed, rotating to next video...');
+      rotateToNextVideo();
+      return;
+    }
     
     console.log('📺 STREAM SETUP:');
     console.log('   Config: ' + config.name);
