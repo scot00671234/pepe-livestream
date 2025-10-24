@@ -35,22 +35,22 @@ const RTMP_ENDPOINTS = [
   'rtmp://pump-prod-tg2x8veh.rtmp.livekit.cloud/x'
 ];
 
-// Streaming configurations
+// Streaming configurations - Optimized for low latency and smooth playback
 const STREAMING_CONFIGS = [
   {
-    name: 'High Performance',
-    inputOptions: ['-re', '-fflags', '+genpts', '-avoid_negative_ts', 'make_zero'],
-    outputOptions: ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '22', '-maxrate', '3M', '-bufsize', '1M', '-g', '30', '-c:a', 'aac', '-b:a', '128k', '-f', 'flv']
+    name: 'Ultra Low Latency',
+    inputOptions: ['-re', '-fflags', '+genpts', '-avoid_negative_ts', 'make_zero', '-analyzeduration', '1000000', '-probesize', '1000000'],
+    outputOptions: ['-vf', 'scale=1280:720', '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-maxrate', '1.5M', '-bufsize', '500k', '-g', '30', '-keyint_min', '30', '-sc_threshold', '0', '-c:a', 'aac', '-b:a', '96k', '-ar', '44100', '-ac', '2', '-f', 'flv']
+  },
+  {
+    name: 'Balanced Performance',
+    inputOptions: ['-re', '-fflags', '+genpts', '-avoid_negative_ts', 'make_zero', '-analyzeduration', '2000000', '-probesize', '2000000'],
+    outputOptions: ['-vf', 'scale=1280:720', '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-crf', '25', '-maxrate', '1.2M', '-bufsize', '600k', '-g', '60', '-keyint_min', '60', '-sc_threshold', '0', '-c:a', 'aac', '-b:a', '80k', '-ar', '44100', '-ac', '2', '-f', 'flv']
   },
   {
     name: 'Stable Fallback',
-    inputOptions: ['-re', '-fflags', '+genpts', '-avoid_negative_ts', 'make_zero'],
-    outputOptions: ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '25', '-maxrate', '2M', '-bufsize', '1M', '-g', '60', '-c:a', 'aac', '-b:a', '96k', '-f', 'flv']
-  },
-  {
-    name: 'Ultra Stable',
-    inputOptions: ['-re', '-fflags', '+genpts', '-avoid_negative_ts', 'make_zero'],
-    outputOptions: ['-c:v', 'libx264', '-preset', 'fast', '-tune', 'zerolatency', '-crf', '28', '-maxrate', '1M', '-bufsize', '2M', '-g', '120', '-c:a', 'aac', '-b:a', '64k', '-f', 'flv']
+    inputOptions: ['-re', '-fflags', '+genpts', '-avoid_negative_ts', 'make_zero', '-analyzeduration', '3000000', '-probesize', '3000000'],
+    outputOptions: ['-vf', 'scale=1280:720', '-c:v', 'libx264', '-preset', 'fast', '-tune', 'zerolatency', '-crf', '28', '-maxrate', '800k', '-bufsize', '400k', '-g', '120', '-keyint_min', '120', '-sc_threshold', '0', '-c:a', 'aac', '-b:a', '64k', '-ar', '44100', '-ac', '2', '-f', 'flv']
   }
 ];
 
@@ -91,12 +91,12 @@ function startHealthMonitoring() {
   healthCheckInterval = setInterval(() => {
     if (isStreaming) {
       const timeSinceLastActivity = Date.now() - lastStreamActivity;
-      if (timeSinceLastActivity > 30000) {
+      if (timeSinceLastActivity > 60000) { // Increased timeout to 60 seconds
         console.log('Stream timeout detected - restarting...');
         restartStream();
       }
     }
-  }, 5000);
+  }, 10000); // Check every 10 seconds instead of 5
 }
 
 function stopHealthMonitoring() {
@@ -194,7 +194,7 @@ function startFallbackStream() {
     streamProcess = ffmpeg()
       .input(FALLBACK_IMAGE_SVG)
       .inputOptions(['-loop', '1', '-r', '1', '-t', '3600']) // Loop image for 1 hour
-      .outputOptions(['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'stillimage', '-crf', '30', '-maxrate', '500k', '-bufsize', '1M', '-g', '60', '-c:a', 'aac', '-b:a', '32k', '-f', 'flv'])
+      .outputOptions(['-vf', 'scale=1280:720', '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'stillimage', '-crf', '30', '-maxrate', '500k', '-bufsize', '500k', '-g', '60', '-keyint_min', '60', '-sc_threshold', '0', '-c:a', 'aac', '-b:a', '32k', '-ar', '44100', '-ac', '2', '-f', 'flv'])
       .output(rtmpUrl)
       .on('start', (commandLine) => {
         console.log('✅ Fallback stream started successfully');
@@ -304,6 +304,8 @@ function startStream() {
       .inputOptions(config.inputOptions)
       .outputOptions(config.outputOptions)
       .output(rtmpUrl)
+      .addOption('-threads', '0') // Use all available CPU threads
+      .addOption('-movflags', '+faststart') // Optimize for streaming
       .on('start', (commandLine) => {
         console.log('✅ Stream started successfully');
         console.log('FFmpeg command:', commandLine);
